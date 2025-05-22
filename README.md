@@ -72,13 +72,13 @@ Contoh output:
 
 ## 🧩 Struktur Project
 
-
+```
 ├── index.js          # Skrip utama
 ├── privatekey.txt    # Daftar private key
 ├── package.json      # Dependency dan scripts
 ├── .env.example      # Contoh environment variables
 └── README.md         # Dokumentasi ini
-
+```
 
 ## 🤝 Kontribusi
 
