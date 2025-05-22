@@ -2,6 +2,7 @@ import 'dotenv/config';
 import fs from 'fs';
 import { ethers } from 'ethers';
 import pLimit from 'p-limit';
+import promiseRetry from 'promise-retry';
 
 // ======================== CONFIG ========================
 const { RPC_URL, TO_ADDRESS } = process.env;
@@ -10,19 +11,17 @@ if (!RPC_URL || !TO_ADDRESS) {
   process.exit(1);
 }
 
-// Baca private keys: 1 per baris
-tlet privateKeys;
+let privateKeys;
 try {
   const data = fs.readFileSync('privatekey.txt', 'utf8').trim();
-  privateKeys = data.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+  privateKeys = data.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   if (privateKeys.length === 0) throw new Error();
 } catch {
   console.error('⚠️ Gagal baca atau file privatekey.txt kosong');
   process.exit(1);
 }
 
-// Daftar token yang akan dikirim (ERC-20 contract addresses)
-const tokenAddresses = [
+tokenAddresses = [
   '0x2d5a4f5634041f50180A25F26b2A8364452E3152',
   '0x1428444Eacdc0Fd115dd4318FcE65B61Cd1ef399',
   '0xf4BE938070f59764C85fAcE374F92A4670ff3877',
@@ -31,40 +30,45 @@ const tokenAddresses = [
   '0xFF27D611ab162d7827bbbA59F140C1E7aE56e95C'
 ];
 
-// ABI minimal untuk ERC-20\const erc20Abi = [
+ABI minimal untuk ERC-20\const erc20Abi = [
   'function name() view returns (string)',
   'function symbol() view returns (string)',
   'function decimals() view returns (uint8)',
   'function balanceOf(address) view returns (uint256)',
-  'function estimateGas() view returns (uint256)',
   'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
-// Setup provider & limiter
 const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-const limit = pLimit(5); // maksimal 5 transaksi paralel
+const limit = pLimit(5);
 
-// Cache metadata token agar tidak ulang RPC call
 const tokenMeta = {};
 async function cacheTokenMetadata() {
   for (const addr of tokenAddresses) {
-    const c = new ethers.Contract(addr, erc20Abi, provider);
-    const [symbol, decimals, name] = await Promise.all([
-      c.symbol(),
-      c.decimals(),
-      c.name()
+    const contract = new ethers.Contract(addr, erc20Abi, provider);
+    const [name, symbol, decimals] = await Promise.all([
+      contract.name(),
+      contract.symbol(),
+      contract.decimals(),
     ]);
-    tokenMeta[addr] = { symbol, decimals, name };
+    tokenMeta[addr] = { name, symbol, decimals };
   }
 }
 
-// Fungsi untuk proses transfer satu token
+async function sendWithRetry(action, retries = 3) {
+  return promiseRetry((retry, number) => {
+    return action().catch(err => {
+      console.warn(`⚠️ Attempt ${number} failed: ${err.message}. Retrying...`);
+      retry(err);
+    });
+  }, { retries, factor: 2, minTimeout: 1000 });
+}
+
 async function processTokenTransfer(wallet, tokenAddr) {
   const { symbol, decimals } = tokenMeta[tokenAddr];
   const contract = new ethers.Contract(tokenAddr, erc20Abi, wallet);
-  const addr = await wallet.getAddress();
+  const address = await wallet.getAddress();
 
-  // Ambil saldo\ n  const balance = await contract.balanceOf(addr);
+  const balance = await contract.balanceOf(address);
   if (balance.isZero()) {
     console.log(`⚠️ ${symbol}: saldo 0, skip`);
     return;
@@ -72,11 +76,10 @@ async function processTokenTransfer(wallet, tokenAddr) {
   const formatted = ethers.utils.formatUnits(balance, decimals);
   console.log(`\n🔹 ${symbol}: saldo ${formatted}`);
 
-  // Estimasi gas & fee data sekaligus
   const [estGas, feeData, block] = await Promise.all([
     contract.estimateGas.transfer(TO_ADDRESS, balance),
     provider.getFeeData(),
-    provider.getBlock('latest')
+    provider.getBlock('latest'),
   ]);
 
   const gasLimit = estGas.mul(120).div(100);
@@ -87,30 +90,27 @@ async function processTokenTransfer(wallet, tokenAddr) {
   console.log(`⛽ maxPriorityFee: ${maxPriorityFeePerGas.toString()}`);
   console.log(`⛽ maxFee: ${maxFeePerGas.toString()}`);
 
-  // Kirim transaksi\ n  const tx = await contract.transfer(
+  const tx = await sendWithRetry(() => contract.transfer(
     TO_ADDRESS,
     balance,
     { gasLimit, maxPriorityFeePerGas, maxFeePerGas }
-  );
+  ));
   console.log(`📤 Tx hash: ${tx.hash}`);
   const receipt = await tx.wait(1);
   console.log(`✅ ${symbol} terkirim di block ${receipt.blockNumber}`);
 }
 
-// Main function
 (async () => {
-  console.log('🔌 Starting Batch Transfer');
+  console.log('🔌 Starting Batch Transfer with Retry Logic');
   await cacheTokenMetadata();
 
   for (const pk of privateKeys) {
     const wallet = new ethers.Wallet(pk, provider);
-    const address = await wallet.getAddress();
-    console.log(`\n🚀 Processing Wallet: ${address}`);
+    console.log(`\n🚀 Processing Wallet: ${await wallet.getAddress()}`);
 
-    // Jalankan paralel terbatas
     const tasks = tokenAddresses.map(addr => limit(() => processTokenTransfer(wallet, addr)));
     await Promise.all(tasks);
-    console.log(`✅ Selesai wallet ${address}`);
+    console.log(`✅ Selesai wallet ${await wallet.getAddress()}`);
   }
 
   console.log('🎉 All wallets processed.');
