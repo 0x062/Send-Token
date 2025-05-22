@@ -3,6 +3,7 @@ import fs from 'fs';
 import { ethers } from 'ethers';
 import pLimit from 'p-limit';
 import promiseRetry from 'promise-retry';
+import chunk from 'lodash.chunk';
 
 // ======================== CONFIG ========================
 const { RPC_URL, TO_ADDRESS } = process.env;
@@ -10,6 +11,10 @@ if (!RPC_URL || !TO_ADDRESS) {
   console.error('⚠️ Pastikan .env berisi RPC_URL dan TO_ADDRESS');
   process.exit(1);
 }
+
+// BATCH & CONCURRENCY SETTINGS
+const WALLET_BATCH_SIZE = 10;  // jumlah wallet per batch
+const TOKEN_CONCURRENCY = 5;   // max proses token paralel per wallet
 
 let privateKeys;
 try {
@@ -30,7 +35,7 @@ tokenAddresses = [
   '0xFF27D611ab162d7827bbbA59F140C1E7aE56e95C'
 ];
 
-ABI minimal untuk ERC-20\const erc20Abi = [
+const erc20Abi = [
   'function name() view returns (string)',
   'function symbol() view returns (string)',
   'function decimals() view returns (uint8)',
@@ -39,9 +44,9 @@ ABI minimal untuk ERC-20\const erc20Abi = [
 ];
 
 const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
-const limit = pLimit(5);
-
+const limit = pLimit(TOKEN_CONCURRENCY);
 const tokenMeta = {};
+
 async function cacheTokenMetadata() {
   for (const addr of tokenAddresses) {
     const contract = new ethers.Contract(addr, erc20Abi, provider);
@@ -54,13 +59,13 @@ async function cacheTokenMetadata() {
   }
 }
 
-async function sendWithRetry(action, retries = 3) {
+async function sendWithRetry(action, retries = 2) {
   return promiseRetry((retry, number) => {
     return action().catch(err => {
       console.warn(`⚠️ Attempt ${number} failed: ${err.message}. Retrying...`);
       retry(err);
     });
-  }, { retries, factor: 2, minTimeout: 1000 });
+  }, { retries, factor: 1.5, minTimeout: 500 });
 }
 
 async function processTokenTransfer(wallet, tokenAddr) {
@@ -100,17 +105,25 @@ async function processTokenTransfer(wallet, tokenAddr) {
   console.log(`✅ ${symbol} terkirim di block ${receipt.blockNumber}`);
 }
 
-(async () => {
+;(async () => {
   console.log('🔌 Starting Batch Transfer with Retry Logic');
   await cacheTokenMetadata();
 
-  for (const pk of privateKeys) {
-    const wallet = new ethers.Wallet(pk, provider);
-    console.log(`\n🚀 Processing Wallet: ${await wallet.getAddress()}`);
+  const walletChunks = chunk(privateKeys, WALLET_BATCH_SIZE);
+  for (const chunkKeys of walletChunks) {
+    console.log(`\n🎛️ Processing wallet batch: ${chunkKeys.length} wallets`);
+    const tasks = chunkKeys.flatMap(pk => {
+      const wallet = new ethers.Wallet(pk, provider);
+      return tokenAddresses.map(addr =>
+        limit(() => processTokenTransfer(wallet, addr))
+      );
+    });
 
-    const tasks = tokenAddresses.map(addr => limit(() => processTokenTransfer(wallet, addr)));
     await Promise.all(tasks);
-    console.log(`✅ Selesai wallet ${await wallet.getAddress()}`);
+
+    // optional: trigger garbage collection if exposed
+    if (global.gc) global.gc();
+    console.log('✅ Batch selesai, memori dibersihkan');
   }
 
   console.log('🎉 All wallets processed.');
