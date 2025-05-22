@@ -1,0 +1,35 @@
+{
+  "name": "erc20-batch-transfer",
+  "version": "1.0.0",
+  "description": "Batch transfer ERC-20 tokens with retry logic and concurrency control",
+  "main": "send.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --expose-gc index.js",
+    "lint": "eslint .",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.0",
+    "ethers": "^6.0.0",
+    "p-limit": "^4.0.0",
+    "promise-retry": "^2.0.0",
+    "lodash.chunk": "^4.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0"
+  },
+  "keywords": [
+    "erc20",
+    "batch",
+    "transfer",
+    "ethers",
+    "retry",
+    "concurrency"
+  ],
+  "author": "0x062",
+  "license": "MIT"
+}
