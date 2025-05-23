@@ -1,21 +1,17 @@
 {
-  "name": "erc20-batch-transfer",
+  "name": "batch-token-transfer",
   "version": "1.0.0",
-  "description": "Script untuk mentransfer token ERC20 dari banyak wallet ke satu alamat tujuan.",
+  "description": "A script for batch ERC-20 token transfer using private keys",
   "type": "module",
   "main": "send.js",
   "scripts": {
-    "start": "node send.js"
+    "start": "node --expose-gc send.js"
   },
   "dependencies": {
-    "chalk": "^5.3.0",
-    "dotenv": "^16.3.1",
-    "ethers": "^6.10.0",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.12.0",
     "lodash.chunk": "^4.2.0",
     "p-limit": "^4.0.0",
     "promise-retry": "^2.0.1"
-  },
-  "keywords": ["erc20", "transfer", "batch", "ethers", "ethereum"],
-  "author": "0x062",
-  "license": "MIT"
+  }
 }
