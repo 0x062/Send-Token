@@ -15,7 +15,7 @@ if (!RPC_URL || !TO_ADDRESS) {
 
 // BATCH & CONCURRENCY SETTINGS
 const WALLET_BATCH_SIZE = 5;  // number of wallets per batch
-const TOKEN_CONCURRENCY = 3;   // max parallel token processes per wallet
+const TOKEN_CONCURRENCY = 2;   // max parallel token processes per wallet
 
 let privateKeys;
 try {
