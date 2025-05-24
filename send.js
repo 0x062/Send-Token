@@ -1,6 +1,11 @@
 import 'dotenv/config';
 import fs from 'fs';
-import { ethers } from 'ethers';
+import { 
+  JsonRpcProvider, 
+  Wallet, 
+  Contract, 
+  utils 
+} from 'ethers';
 import pLimit from 'p-limit';
 import promiseRetry from 'promise-retry';
 import chunk from 'lodash.chunk';
@@ -44,7 +49,7 @@ const erc20Abi = [
   'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
-const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+const provider = new JsonRpcProvider(RPC_URL);
 const limit = pLimit(TOKEN_CONCURRENCY);
 const tokenMeta = {};
 
