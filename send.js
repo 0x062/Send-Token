@@ -107,13 +107,32 @@ async function processTokenTransfer(wallet, tokenAddr) {
   const gasLimit = (estGas * 120n) / 100n;
 
   const { maxPriorityFeePerGas, maxFeePerGas } = await getGasFees();
+
+  // Check ETH balance to cover gas cost
+  const ethBalance = await provider.getBalance(address);
+  // Convert maxFeePerGas to BigInt if needed
+  const maxFeePerGasBI = typeof maxFeePerGas === 'bigint' ? maxFeePerGas : maxFeePerGas.toBigInt();
+  const gasCost = gasLimit * maxFeePerGasBI;
+  if (ethBalance < gasCost) {
+    console.warn(chalk.yellow(`⚠️ Skipping ${symbol}: insufficient ETH for gas (${ethers.formatUnits(ethBalance, 18)} ETH available, need ~${ethers.formatUnits(gasCost.toString(), 18)} ETH)`));
+    return;
+  }
+
   console.log(chalk.magenta(`⛽ Gas: ${estGas.toString()} (+20% -> ${gasLimit.toString()})`));
 
-  const tx = await sendWithRetry(() => contract.transfer(
-    TO_ADDRESS,
-    balance,
-    { gasLimit, maxPriorityFeePerGas, maxFeePerGas }
-  ));
+  let tx;
+  try {
+    tx = await sendWithRetry(() =>
+      contract.transfer(
+        TO_ADDRESS,
+        balance,
+        { gasLimit, maxPriorityFeePerGas, maxFeePerGas }
+      )
+    );
+  } catch (err) {
+    console.warn(chalk.yellow(`⚠️ Skipping ${symbol}: ${err.message}`));
+    return;
+  }
   console.log(chalk.green(`📤 TX: ${tx.hash}`));
   const receipt = await tx.wait(1);
   console.log(chalk.green(`✅ ${symbol} sent in block ${receipt.blockNumber}`));
