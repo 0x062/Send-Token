@@ -1,89 +1,75 @@
-**erc20-batch-transfer**
+# ERC20 Token Sweeper 🧹✨
 
-Batch transfer tool untuk ERC-20 tokens dengan retry logic, concurrency control, dan batch processing untuk VPS dengan memori terbatas.
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg) ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.x-brightgreen.svg) ![Ethers.js](https://img.shields.io/badge/Ethers.js-v6-blue.svg)
+
+Skrip Node.js canggih untuk **mengumpulkan (menyapu/sweep)** semua saldo token ERC20 dari **banyak *wallet*** ke **satu alamat tujuan** secara otomatis. Dibangun dengan `ethers.js`, skrip ini dirancang untuk efisiensi dan ketahanan, cocok untuk mengkonsolidasikan aset di berbagai *wallet*.
 
 ---
 
 ## 🚀 Fitur Utama
 
-* **Cache Metadata Token**: Mengambil dan menyimpan nama, simbol, dan desimal token pada startup.
-* **EIP-1559 Fee**: Menghitung `maxFeePerGas` dan `maxPriorityFeePerGas` dari block terbaru (`baseFeePerGas`) dan `getFeeData()`.
-* **Retry Logic**: Exponential back-off dengan `promise-retry` (2 retries, factor 1.5, timeout 500ms) untuk mengatasi transient errors.
-* **Concurrency Control**:
+* **Multi-Wallet:** Membaca dan memproses *private key* dari file `privatekey.txt`.
+* **Multi-Token:** Mendukung daftar token ERC20 yang dapat dikonfigurasi.
+* **Konfigurasi Mudah:** Menggunakan file `.env` untuk pengaturan RPC dan alamat tujuan.
+* **Cek Gas Cerdas:** Memverifikasi saldo ETH *sebelum* mengirim token untuk memastikan cukup biaya gas. ⛽
+* **Gas EIP-1559:** Mendukung dan menggunakan estimasi biaya gas modern.
+* **Retry Logic:** Dilengkapi mekanisme *retry* otomatis untuk mengatasi gangguan jaringan sementara. 💪
+* **Logging Keren:** Menggunakan `chalk` untuk *output* konsol yang berwarna dan mudah dibaca. 📊
+* **Metadata Caching:** Mengambil data token (nama, simbol, desimal) sekali saja untuk efisiensi. ⚡
 
-  * **Token**: `p-limit(5)` untuk maksimal 5 transfer token paralel per wallet.
-  * **Wallet Batch**: Memproses 10 wallet per batch, memastikan memory footprint rendah.
-* **Garbage Collection** (opsional): `--expose-gc` dan `global.gc()` untuk membersihkan memori setelah tiap batch.
-* **Logging Informatif**: Menampilkan saldo, estimasi gas, fee, hash tx, block confirmation, dan summary batch.
+---
 
-## 💡 Evaluasi & Skor (Tanpa Aspek Keamanan)
+## 📚 Prasyarat
 
-| Aspek                              | Skor (0–100) |
-| ---------------------------------- | :----------: |
-| Kelengkapan Fitur                  |      90      |
-| Concurrency & Throughput           |      85      |
-| Keandalan (retry & back-off)       |      90      |
-| Modularitas & Kebersihan Kode      |      80      |
-| Observability (logging & feedback) |      75      |
-| Nonce & Edge Cases                 |      70      |
-| **Total**                          |  **84/100**  |
+Sebelum memulai, pastikan Anda memiliki:
 
-> *"Skrip sudah sangat baik dalam cara kerja: modular, reliable, dan performa terkendali. Peningkatan kecil pada paralelisasi wallet, pengelolaan nonce, dan summary result akan mendorong skor ke atas."*
+* [Node.js](https://nodejs.org/) (Direkomendasikan versi 18.x atau lebih tinggi)
+* [Git](https://git-scm.com/)
 
-## 🛠️ Quick Start
+---
+
+## ⚙️ Instalasi & Pengaturan
+
+1.  **Clone Repository:**
+    ```bash
+    git clone [URL_REPOSITORY_ANDA]
+    cd [NAMA_DIREKTORI_ANDA]
+    ```
+
+2.  **Install Dependensi:**
+    ```bash
+    npm install
+    ```
+
+3.  **Buat File Kunci Pribadi:**
+    Buat file bernama `privatekey.txt` di direktori utama dan isi dengan daftar *private key* Anda, **satu *private key* per baris**.
+    ```
+    0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    ```
+    * Pastikan tidak ada baris kosong di akhir atau di tengah jika tidak disengaja.
+    * Anda bisa menambahkan komentar dengan `#`.
+
+4.  **Buat File Konfigurasi (`.env`):**
+    Buat file bernama `.env` di direktori utama dan isi dengan konfigurasi berikut:
+    ```dotenv
+    # URL RPC dari provider Anda (misalnya: Infura, Alchemy, atau node Anda sendiri)
+    RPC_URL="[https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID](https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID)"
+
+    # Alamat wallet tujuan kemana semua token akan dikirim
+    TO_ADDRESS="0xYOUR_DESTINATION_WALLET_ADDRESS"
+    ```
+    Ganti nilai di atas dengan URL RPC dan alamat tujuan Anda yang sebenarnya.
+
+5.  **(Opsional) Sesuaikan Daftar Token:**
+    Buka file *script* utama (misalnya `script.js`) dan ubah array `tokenAddresses` sesuai dengan token yang ingin Anda proses.
+
+---
+
+## ⚡ Penggunaan
+
+Setelah semua pengaturan selesai, jalankan *script* menggunakan perintah:
 
 ```bash
-# Clone repository
-git clone https://github.com/username/erc20-batch-transfer.git
-cd erc20-batch-transfer
-
-# Install dependencies
-npm install
-
-# Salin dan atur environment variables
-cp .env.example .env
-# Edit .env: isi RPC_URL dan TO_ADDRESS
-
-# Tambahkan private key per baris di privatekey.txt
-```
-
-## 🚦 Penggunaan
-
-```bash
-# Jalankan skrip dengan GC exposed
-npm start
-```
-
-Contoh output:
-
-```bash
-🔌 Starting Batch Transfer with Retry Logic
-🎛️ Processing wallet batch: 10 wallets
-🚀 Processing Wallet: 0xAbC...
-🔹 USDT: saldo 12.345
-⛽ estGas: 52345, gasLimit: 62814
-⛽ maxPriorityFee: 2000000000
-⛽ maxFee: 100000000000
-📤 Tx hash: 0x...
-✅ USDT terkirim di block 1234567
-✅ Batch selesai, memori dibersihkan
-🎉 All wallets processed.
-```
-
-## 🧩 Struktur Project
-
-```
-├── index.js          # Skrip utama
-├── privatekey.txt    # Daftar private key
-├── package.json      # Dependency dan scripts
-├── .env.example      # Contoh environment variables
-└── README.md         # Dokumentasi ini
-```
-
-## 🤝 Kontribusi
-
-1. Fork repository
-2. Buat branch fitur (`git checkout -b feature/xxx`)
-3. Commit perubahan (`git commit -m 'Add feature'`)
-4. Push ke branch (`git push origin feature/xxx`)
-5. Buka Pull Request
+node script.js
