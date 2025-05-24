@@ -14,19 +14,21 @@ if (!RPC_URL || !TO_ADDRESS) {
 }
 
 // BATCH & CONCURRENCY SETTINGS
-const WALLET_BATCH_SIZE = 5;  // number of wallets per batch
-const TOKEN_CONCURRENCY = 2;   // max parallel token processes per wallet
+const WALLET_BATCH_SIZE = 5;
+const TOKEN_CONCURRENCY = 2;
 
+// Read private keys
 let privateKeys;
 try {
   const data = fs.readFileSync('privatekey.txt', 'utf8').trim();
-  privateKeys = data.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  if (privateKeys.length === 0) throw new Error();
+  privateKeys = data.split(/\r?\n/).filter(Boolean);
+  if (!privateKeys.length) throw new Error();
 } catch {
   console.error(chalk.red('⚠️ Failed to read privatekey.txt or file is empty'));
   process.exit(1);
 }
 
+// Token list and ABI
 const tokenAddresses = [
   '0x2d5a4f5634041f50180A25F26b2A8364452E3152',
   '0x1428444Eacdc0Fd115dd4318FcE65B61Cd1ef399',
@@ -35,7 +37,6 @@ const tokenAddresses = [
   '0xBEbF4E25652e7F23CCdCCcaaCB32004501c4BfF8',
   '0xFF27D611ab162d7827bbbA59F140C1E7aE56e95C'
 ];
-
 const erc20Abi = [
   'function name() view returns (string)',
   'function symbol() view returns (string)',
@@ -44,10 +45,12 @@ const erc20Abi = [
   'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
+// Initialize provider and concurrency limiter
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const limit = pLimit(TOKEN_CONCURRENCY);
 const tokenMeta = {};
 
+// Cache token metadata
 async function cacheTokenMetadata() {
   for (const addr of tokenAddresses) {
     try {
@@ -58,83 +61,77 @@ async function cacheTokenMetadata() {
         contract.decimals(),
       ]);
       tokenMeta[addr] = { name, symbol, decimals };
-      console.log(chalk.green(`✅ Cached metadata for token ${symbol} (${addr})`));
-    } catch (err) {
-      console.warn(chalk.yellow(`⚠️ Failed to fetch metadata for token at ${addr}, skipping`));
+      console.log(chalk.green(`✅ Cached ${symbol} (${addr})`));
+    } catch {
+      console.warn(chalk.yellow(`⚠️ Skipped metadata for ${addr}`));
     }
   }
 }
 
-async function getGasFees(provider) {
+// Get gas fees
+async function getGasFees() {
   const feeData = await provider.getFeeData();
   const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? ethers.parseUnits('2', 'gwei');
   const maxFeePerGas = feeData.maxFeePerGas ?? ethers.parseUnits('50', 'gwei');
   return { maxPriorityFeePerGas, maxFeePerGas };
 }
 
-async function sendWithRetry(action, retries = 2) {
-  return promiseRetry((retry, number) => {
-    return action().catch(err => {
-      console.warn(chalk.yellow(`⚠️ Attempt ${number} failed: ${err.message}. Retrying...`));
+// Retry helper
+async function sendWithRetry(action) {
+  return promiseRetry((retry, number) =>
+    action().catch(err => {
+      console.warn(chalk.yellow(`⚠️ Attempt ${number} failed: ${err.message}`));
       retry(err);
-    });
-  }, { retries, factor: 1.5, minTimeout: 500 });
+    })
+  , { retries: 2, factor: 1.5, minTimeout: 500 });
 }
 
+// Process transfers for one token and wallet
 async function processTokenTransfer(wallet, tokenAddr) {
   const { symbol, decimals } = tokenMeta[tokenAddr];
-  const contract = new ethers.Contract(tokenAddr, erc20Abi, wallet);
   const address = await wallet.getAddress();
+  const contract = new ethers.Contract(tokenAddr, erc20Abi, wallet);
 
   const balance = await contract.balanceOf(address);
   if (balance === 0n) {
-    console.log(chalk.blue(`⚠️ ${symbol}: balance 0, skipping`));
+    console.log(chalk.blue(`⚠️ ${symbol}: zero balance`));
     return;
   }
-  const formatted = ethers.formatUnits(balance, decimals);
-  console.log(chalk.cyan(`\n🔹 ${symbol}: balance ${formatted}`));
+  console.log(chalk.cyan(`🔹 ${symbol}: ${ethers.formatUnits(balance, decimals)}`));
 
-  // Build transaction and estimate gas via provider
-  const txRequest = await contract.populateTransaction.transfer(TO_ADDRESS, balance);
-  txRequest.from = address;
+  // Encode transfer data
+  const data = contract.interface.encodeFunctionData('transfer', [TO_ADDRESS, balance]);
+  const txRequest = { to: tokenAddr, from: address, data };
   const estGas = await provider.estimateGas(txRequest);
-  const gasLimit = estGas.mul(120).div(100); // 20% buffer
+  const gasLimit = estGas.mul(120).div(100);
 
-  const { maxPriorityFeePerGas, maxFeePerGas } = await getGasFees(provider);
-
-  console.log(chalk.magenta(`⛽ Estimated Gas: ${estGas.toString()}, Gas Limit (with buffer): ${gasLimit.toString()}`));
-  console.log(chalk.magenta(`⛽ Max Priority Fee Per Gas: ${maxPriorityFeePerGas.toString()}`));
-  console.log(chalk.magenta(`⛽ Max Fee Per Gas: ${maxFeePerGas.toString()}`));
+  const { maxPriorityFeePerGas, maxFeePerGas } = await getGasFees();
+  console.log(chalk.magenta(`⛽ Gas: ${estGas.toString()} (+20% -> ${gasLimit.toString()})`));
 
   const tx = await sendWithRetry(() => contract.transfer(
     TO_ADDRESS,
     balance,
     { gasLimit, maxPriorityFeePerGas, maxFeePerGas }
   ));
-  console.log(chalk.green(`📤 Transaction Hash: ${tx.hash}`));
+  console.log(chalk.green(`📤 TX: ${tx.hash}`));
   const receipt = await tx.wait(1);
-  console.log(chalk.green(`✅ ${symbol} transferred in block ${receipt.blockNumber}`));
+  console.log(chalk.green(`✅ ${symbol} sent in block ${receipt.blockNumber}`));
 }
 
-;(async () => {
-  console.log(chalk.yellow('🔌 Starting batch token transfers with retry logic'));
+// Main
+(async () => {
+  console.log(chalk.yellow('🔌 Start transfers'));
   await cacheTokenMetadata();
 
-  const walletChunks = chunk(privateKeys, WALLET_BATCH_SIZE);
-  for (const chunkKeys of walletChunks) {
-    console.log(chalk.yellow(`\n🎛️ Processing wallet batch: ${chunkKeys.length} wallets`));
+  for (const chunkKeys of chunk(privateKeys, WALLET_BATCH_SIZE)) {
+    console.log(chalk.yellow(`🎛️ Batch of ${chunkKeys.length}`));
     const tasks = chunkKeys.flatMap(pk => {
       const wallet = new ethers.Wallet(pk, provider);
-      return tokenAddresses.map(addr =>
-        limit(() => processTokenTransfer(wallet, addr))
-      );
+      return tokenAddresses.map(addr => limit(() => processTokenTransfer(wallet, addr)));
     });
-
     await Promise.all(tasks);
-
     if (global.gc) global.gc();
-    console.log(chalk.green('✅ Batch completed, memory cleaned'));
+    console.log(chalk.green('✅ Batch done'));
   }
-
-  console.log(chalk.green('🎉 All wallets processed successfully.'));
+  console.log(chalk.green('🎉 All done'));
 })();
