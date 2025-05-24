@@ -94,7 +94,10 @@ async function processTokenTransfer(wallet, tokenAddr) {
   const formatted = ethers.formatUnits(balance, decimals);
   console.log(chalk.cyan(`\n🔹 ${symbol}: balance ${formatted}`));
 
-  const estGas = await contract.estimateGas.transfer(TO_ADDRESS, balance);
+  // Build transaction and estimate gas via provider
+  const txRequest = await contract.populateTransaction.transfer(TO_ADDRESS, balance);
+  txRequest.from = address;
+  const estGas = await provider.estimateGas(txRequest);
   const gasLimit = estGas.mul(120).div(100); // 20% buffer
 
   const { maxPriorityFeePerGas, maxFeePerGas } = await getGasFees(provider);
