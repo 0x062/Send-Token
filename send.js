@@ -103,7 +103,8 @@ async function processTokenTransfer(wallet, tokenAddr) {
   const data = contract.interface.encodeFunctionData('transfer', [TO_ADDRESS, balance]);
   const txRequest = { to: tokenAddr, from: address, data };
   const estGas = await provider.estimateGas(txRequest);
-  const gasLimit = estGas.mul(120).div(100);
+  // Use BigInt math for gas buffer
+  const gasLimit = (estGas * 120n) / 100n;
 
   const { maxPriorityFeePerGas, maxFeePerGas } = await getGasFees();
   console.log(chalk.magenta(`⛽ Gas: ${estGas.toString()} (+20% -> ${gasLimit.toString()})`));
