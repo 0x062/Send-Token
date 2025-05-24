@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import fs from 'fs';
 import { ethers } from 'ethers';
-import pLimit from 'p-limit';
 import promiseRetry from 'promise-retry';
 import chunk from 'lodash.chunk';
 import chalk from 'chalk';
@@ -13,9 +12,8 @@ if (!RPC_URL || !TO_ADDRESS) {
   process.exit(1);
 }
 
-// BATCH & CONCURRENCY SETTINGS
-const WALLET_BATCH_SIZE = 5;
-const TOKEN_CONCURRENCY = 2;
+// BATCH SETTINGS
+const WALLET_BATCH_SIZE = 5; // number of wallets per batch
 
 // Read private keys
 let privateKeys;
@@ -45,9 +43,8 @@ const erc20Abi = [
   'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
-// Initialize provider and concurrency limiter
+// Initialize provider
 const provider = new ethers.JsonRpcProvider(RPC_URL);
-const limit = pLimit(TOKEN_CONCURRENCY);
 const tokenMeta = {};
 
 // Cache token metadata
@@ -86,56 +83,61 @@ async function sendWithRetry(action) {
   , { retries: 2, factor: 1.5, minTimeout: 500 });
 }
 
-// Process transfers for one token and wallet
-async function processTokenTransfer(wallet, tokenAddr) {
-  const { symbol, decimals } = tokenMeta[tokenAddr];
+// Process transfers for one wallet sequentially
+async function processWallet(pk) {
+  const wallet = new ethers.Wallet(pk, provider);
   const address = await wallet.getAddress();
-  const contract = new ethers.Contract(tokenAddr, erc20Abi, wallet);
+  console.log(chalk.yellow(`\n👤 Wallet: ${address}`));
 
-  const balance = await contract.balanceOf(address);
-  if (balance === 0n) {
-    console.log(chalk.blue(`⚠️ ${symbol}: zero balance`));
-    return;
+  for (const tokenAddr of tokenAddresses) {
+    const { symbol, decimals } = tokenMeta[tokenAddr];
+    const contract = new ethers.Contract(tokenAddr, erc20Abi, wallet);
+
+    // Check token balance
+    const balance = await contract.balanceOf(address);
+    if (balance === 0n) {
+      console.log(chalk.blue(`⚠️ ${symbol}: zero balance`));
+      continue;
+    }
+    console.log(chalk.cyan(`🔹 ${symbol}: ${ethers.formatUnits(balance, decimals)}`));
+
+    // Encode transfer data
+    const data = contract.interface.encodeFunctionData('transfer', [TO_ADDRESS, balance]);
+    const txRequest = { to: tokenAddr, from: address, data };
+    const estGas = await provider.estimateGas(txRequest);
+    const gasLimit = (estGas * 120n) / 100n;
+
+    const { maxPriorityFeePerGas, maxFeePerGas } = await getGasFees();
+
+    // Check ETH for gas
+    const ethBalance = await provider.getBalance(address);
+    const maxFeeBI = typeof maxFeePerGas === 'bigint' ? maxFeePerGas : maxFeePerGas.toBigInt();
+    const gasCost = gasLimit * maxFeeBI;
+    if (ethBalance < gasCost) {
+      console.warn(chalk.yellow(`⚠️ Skipping ${symbol}: insufficient ETH for gas (${ethers.formatUnits(ethBalance, 18)} ETH, need ~${ethers.formatUnits(gasCost.toString(), 18)} ETH)`));
+      continue;
+    }
+
+    // Send transaction
+    let tx;
+    try {
+      tx = await sendWithRetry(() =>
+        contract.transfer(
+          TO_ADDRESS,
+          balance,
+          { gasLimit, maxPriorityFeePerGas, maxFeePerGas }
+        )
+      );
+    } catch (err) {
+      console.warn(chalk.yellow(`⚠️ Skipping ${symbol}: ${err.message}`));
+      continue;
+    }
+    console.log(chalk.green(`📤 TX: ${tx.hash}`));
+    const receipt = await tx.wait(1);
+    console.log(chalk.green(`✅ ${symbol} sent in block ${receipt.blockNumber}`));
   }
-  console.log(chalk.cyan(`🔹 ${symbol}: ${ethers.formatUnits(balance, decimals)}`));
-
-  // Encode transfer data
-  const data = contract.interface.encodeFunctionData('transfer', [TO_ADDRESS, balance]);
-  const txRequest = { to: tokenAddr, from: address, data };
-  const estGas = await provider.estimateGas(txRequest);
-  // Use BigInt math for gas buffer
-  const gasLimit = (estGas * 120n) / 100n;
-
-  const { maxPriorityFeePerGas, maxFeePerGas } = await getGasFees();
-
-  // Check ETH balance to cover gas cost
-  const ethBalance = await provider.getBalance(address);
-  // Convert maxFeePerGas to BigInt if needed
-  const maxFeePerGasBI = typeof maxFeePerGas === 'bigint' ? maxFeePerGas : maxFeePerGas.toBigInt();
-  const gasCost = gasLimit * maxFeePerGasBI;
-  if (ethBalance < gasCost) {
-    console.warn(chalk.yellow(`⚠️ Skipping ${symbol}: insufficient ETH for gas (${ethers.formatUnits(ethBalance, 18)} ETH available, need ~${ethers.formatUnits(gasCost.toString(), 18)} ETH)`));
-    return;
-  }
-
-  console.log(chalk.magenta(`⛽ Gas: ${estGas.toString()} (+20% -> ${gasLimit.toString()})`));
-
-  let tx;
-  try {
-    tx = await sendWithRetry(() =>
-      contract.transfer(
-        TO_ADDRESS,
-        balance,
-        { gasLimit, maxPriorityFeePerGas, maxFeePerGas }
-      )
-    );
-  } catch (err) {
-    console.warn(chalk.yellow(`⚠️ Skipping ${symbol}: ${err.message}`));
-    return;
-  }
-  console.log(chalk.green(`📤 TX: ${tx.hash}`));
-  const receipt = await tx.wait(1);
-  console.log(chalk.green(`✅ ${symbol} sent in block ${receipt.blockNumber}`));
+  if (global.gc) global.gc();
+  console.log(chalk.green(`✅ Completed wallet ${address}`));
 }
 
 // Main
@@ -144,14 +146,10 @@ async function processTokenTransfer(wallet, tokenAddr) {
   await cacheTokenMetadata();
 
   for (const chunkKeys of chunk(privateKeys, WALLET_BATCH_SIZE)) {
-    console.log(chalk.yellow(`🎛️ Batch of ${chunkKeys.length}`));
-    const tasks = chunkKeys.flatMap(pk => {
-      const wallet = new ethers.Wallet(pk, provider);
-      return tokenAddresses.map(addr => limit(() => processTokenTransfer(wallet, addr)));
-    });
-    await Promise.all(tasks);
-    if (global.gc) global.gc();
-    console.log(chalk.green('✅ Batch done'));
+    console.log(chalk.yellow(`🎛️ Processing batch of ${chunkKeys.length} wallets`));
+    for (const pk of chunkKeys) {
+      await processWallet(pk);
+    }
   }
-  console.log(chalk.green('🎉 All done'));
+  console.log(chalk.green('\n🎉 All done'));
 })();
