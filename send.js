@@ -1,11 +1,6 @@
 import 'dotenv/config';
 import fs from 'fs';
-import { 
-  JsonRpcProvider, 
-  Wallet, 
-  Contract, 
-  utils 
-} from 'ethers';
+import { ethers } from 'ethers';
 import pLimit from 'p-limit';
 import promiseRetry from 'promise-retry';
 import chunk from 'lodash.chunk';
@@ -49,7 +44,7 @@ const erc20Abi = [
   'function transfer(address to, uint256 amount) returns (bool)'
 ];
 
-const provider = new JsonRpcProvider(RPC_URL);
+const provider = new ethers.JsonRpcProvider(RPC_URL);
 const limit = pLimit(TOKEN_CONCURRENCY);
 const tokenMeta = {};
 
@@ -72,8 +67,8 @@ async function cacheTokenMetadata() {
 
 async function getGasFees(provider) {
   const feeData = await provider.getFeeData();
-  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? ethers.utils.parseUnits('2', 'gwei');
-  const maxFeePerGas = feeData.maxFeePerGas ?? ethers.utils.parseUnits('50', 'gwei');
+  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? ethers.parseUnits('2', 'gwei');
+  const maxFeePerGas = feeData.maxFeePerGas ?? ethers.parseUnits('50', 'gwei');
   return { maxPriorityFeePerGas, maxFeePerGas };
 }
 
@@ -96,7 +91,7 @@ async function processTokenTransfer(wallet, tokenAddr) {
     console.log(chalk.blue(`⚠️ ${symbol}: balance 0, skipping`));
     return;
   }
-  const formatted = ethers.utils.formatUnits(balance, decimals);
+  const formatted = ethers.formatUnits(balance, decimals);
   console.log(chalk.cyan(`\n🔹 ${symbol}: balance ${formatted}`));
 
   const estGas = await contract.estimateGas.transfer(TO_ADDRESS, balance);
