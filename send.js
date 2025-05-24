@@ -87,7 +87,7 @@ async function processTokenTransfer(wallet, tokenAddr) {
   const address = await wallet.getAddress();
 
   const balance = await contract.balanceOf(address);
-  if (balance.isZero()) {
+  if (balance === 0n) {
     console.log(chalk.blue(`⚠️ ${symbol}: balance 0, skipping`));
     return;
   }
